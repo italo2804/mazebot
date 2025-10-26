@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MazeBot: El Robot del Laberinto (Dificultad Aleatoria)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117;
+        }
+        canvas {
+            border: 4px solid #4a90e2;
+            border-radius: 12px;
+            background-color: #161b22;
+            display: block;
+            touch-action: none; /* Previene el scroll en dispositivos táctiles */
+        }
+        .robot-button {
+            transition: all 0.15s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+        .robot-button:active {
+            transform: translateY(1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="p-4 flex flex-col items-center justify-center min-h-screen">
+
+    <div class="max-w-xl w-full text-center mb-6">
+        <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500 mb-2">
+            🤖 MazeBot: El Laberinto 🍏
+        </h1>
+        <p class="text-gray-300 italic mb-2">
+            "Usa la lógica y la tecnología para resolver problemas."
+        </p>
+        <div id="game-status" class="text-xl font-semibold text-white p-2 rounded-lg bg-gray-800 shadow-lg">
+            Nivel: 1 | Dificultad IA: Baja
+        </div>
+    </div>
+
+    <canvas id="mazeCanvas" width="400" height="400" class="shadow-2xl"></canvas>
+
+    <div class="mt-8 w-full max-w-sm">
+        <h2 class="text-lg font-semibold text-gray-300 mb-3 text-center">Controles (Teclas de Flecha o WASD)</h2>
+        <div class="flex flex-col items-center space-y-1">
+            
+            <button id="btn-up" class="robot-button w-16 h-12 bg-indigo-500 hover:bg-indigo-600 text-white font-extrabold rounded-lg">
+                &uarr;
+            </button>
+            <div class="flex space-x-1">
+                
+                <button id="btn-left" class="robot-button w-16 h-12 bg-indigo-500 hover:bg-indigo-600 text-white font-extrabold rounded-lg">
+                    &larr;
+                </button>
+                <button id="btn-down" class="robot-button w-16 h-12 bg-indigo-500 hover:bg-indigo-600 text-white font-extrabold rounded-lg">
+                    &darr;
+                </button>
+                <button id="btn-right" class="robot-button w-16 h-12 bg-indigo-500 hover:bg-indigo-600 text-white font-extrabold rounded-lg">
+                    &rarr;
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="message-box" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center hidden z-50">
+        <div class="bg-gray-700 p-8 rounded-xl shadow-2xl text-center max-w-md mx-4 border-t-4 border-indigo-400">
+            <h3 id="modal-title" class="text-3xl font-bold text-white mb-4">¡Felicidades!</h3>
+            <p id="modal-text" class="text-gray-200 mb-6 text-lg">Has completado el Nivel 1.</p>
+            <button id="modal-button" class="px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition duration-200 shadow-md">
+                Siguiente Nivel
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Configuración inicial del juego
+        const canvas = document.getElementById('mazeCanvas');
+        const ctx = canvas.getContext('2d');
+        const CELL_SIZE = 40;
+        const GRID_SIZE = canvas.width / CELL_SIZE; // 10x10 grid
+
+        let robot = { x: 0, y: 0, size: 10 }; // Posición y tamaño del robot (centro de la celda)
+        let end = { x: GRID_SIZE - 1, y: GRID_SIZE - 1 }; // Posición de la meta
+        let currentLevel = 1;
+        let aiVisionRadius = 0; // Radio del círculo de visión de la IA (verde)
+        const MAX_AI_LEVEL = 5; // Nivel máximo para el crecimiento del círculo (Niveles 1 a 5)
+        const WALLS_TO_BREAK_MAX = 3; // Máximo de paredes extra que se pueden romper (para dificultad aleatoria)
+        let wallsToBreak = 0; // Número de paredes a romper en el nivel actual
+        let maze = []; // Almacenará la estructura del laberinto (paredes)
+        let isMoving = false; // Bandera para controlar la velocidad del movimiento
+        let fruit = null; // Objeto para la posición de la fruta
+        let hasFruit = false; // Indica si hay una fruta en el laberinto
+        let visionBoostActive = false; // Indica si la visión completa está activa
+
+        const statusDisplay = document.getElementById('game-status');
+        const messageBox = document.getElementById('message-box');
+        const modalTitle = document.getElementById('modal-title');
+        const modalText = document.getElementById('modal-text');
+        const modalButton = document.getElementById('modal-button');
+
+        // Función de ayuda para mezclar direcciones (utilizada en generación y ajuste)
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        // Función de inicialización del juego
+        function initGame() {
+            robot.x = 0;
+            robot.y = 0;
+            
+            // 1. DIFICULTAD ALEATORIA DEL MAPA: Determinar cuántas paredes extra romper
+            wallsToBreak = Math.floor(Math.random() * (WALLS_TO_BREAK_MAX + 1)); 
+            
+            generateMaze();
+            adjustDifficulty(wallsToBreak); // Aplicar los atajos aleatorios
+            spawnFruit(); // Intenta generar la fruta al inicio del nivel
+            drawGame();
+            updateStatus();
+            isMoving = false;
+        }
+
+        // Genera un laberinto básico (Backtracking Recursivo/DFS)
+        function generateMaze() {
+            // Inicializa todas las celdas con todas las paredes
+            maze = Array(GRID_SIZE).fill(0).map(() => 
+                Array(GRID_SIZE).fill(0).map(() => ({ 
+                    walls: { N: true, E: true, S: true, W: true }, 
+                    visited: false 
+                }))
+            );
+
+            function carvePath(x, y) {
+                maze[y][x].visited = true;
+                
+                const directions = shuffle([
+                    { dx: 0, dy: -1, wall: 'N', opposite: 'S' }, // North
+                    { dx: 1, dy: 0, wall: 'E', opposite: 'W' },  // East
+                    { dx: 0, dy: 1, wall: 'S', opposite: 'N' },  // South
+                    { dx: -1, dy: 0, wall: 'W', opposite: 'E' }   // West
+                ]);
+
+                for (const dir of directions) {
+                    const nx = x + dir.dx;
+                    const ny = y + dir.dy;
+
+                    if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && !maze[ny][nx].visited) {
+                        // Romper la pared entre la celda actual y la siguiente
+                        maze[y][x].walls[dir.wall] = false;
+                        maze[ny][nx].walls[dir.opposite] = false;
+                        carvePath(nx, ny);
+                    }
+                }
+            }
+
+            carvePath(0, 0);
+
+            // Asegurar que la entrada (0,0) y la salida (GRID_SIZE-1, GRID_SIZE-1) estén despejadas de paredes externas
+            maze[0][0].walls.W = false; // Abrir la entrada
+            maze[GRID_SIZE - 1][GRID_SIZE - 1].walls.E = false; // Abrir la salida
+        }
+
+        // Ajusta la dificultad rompiendo paredes extra (creando atajos)
+        function adjustDifficulty(numBreaks) {
+            if (numBreaks === 0) return; // Máxima dificultad (sin atajos)
+
+            let brokenCount = 0;
+            // Intentar romper paredes hasta alcanzar el número deseado
+            while (brokenCount < numBreaks) {
+                const x = Math.floor(Math.random() * GRID_SIZE);
+                const y = Math.floor(Math.random() * GRID_SIZE);
+                const cell = maze[y][x];
+
+                // Intentar romper una pared aleatoria: N, E, S, W
+                const directions = shuffle(['N', 'E', 'S', 'W']);
+
+                for (const wall of directions) {
+                    // Solo romper si la pared existe y no es una pared exterior (la comprobación de límites lo asegura)
+                    if (cell.walls[wall]) {
+                        const dx = (wall === 'E' ? 1 : wall === 'W' ? -1 : 0);
+                        const dy = (wall === 'S' ? 1 : wall === 'N' ? -1 : 0);
+                        const opposite = (wall === 'N' ? 'S' : wall === 'S' ? 'N' : wall === 'E' ? 'W' : 'E');
+
+                        const nx = x + dx;
+                        const ny = y + dy;
+
+                        // Comprobar límites para evitar romper paredes exteriores del laberinto
+                        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
+                            // Romper pared en la celda actual
+                            cell.walls[wall] = false;
+                            // Romper pared opuesta en la celda vecina
+                            maze[ny][nx].walls[opposite] = false;
+                            
+                            brokenCount++;
+                            break; // Pasar al siguiente intento de rotura
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Genera una fruta en una posición aleatoria (si aplica)
+        function spawnFruit() {
+            fruit = null; // Resetear fruta anterior
+            hasFruit = false;
+
+            // La fruta aparece a partir del Nivel 6 y solo si el radio de visión de la IA es > 0
+            if (currentLevel >= 6 && aiVisionRadius > 0) {
+                let rx, ry;
+                do {
+                    rx = Math.floor(Math.random() * GRID_SIZE);
+                    ry = Math.floor(Math.random() * GRID_SIZE);
+                } while ((rx === robot.x && ry === robot.y) || (rx === end.x && ry === end.y)); // Asegura que no spawnee en robot o meta
+
+                fruit = { x: rx, y: ry };
+                hasFruit = true;
+            }
+        }
+
+
+        // Dibuja el estado actual del juego
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Dibuja el Laberinto
+            ctx.strokeStyle = '#4a90e2'; // Color de las paredes
+            ctx.lineWidth = 2;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const cell = maze[y][x];
+                    const left = x * CELL_SIZE;
+                    const top = y * CELL_SIZE;
+
+                    // Dibujar paredes
+                    if (cell.walls.N) {
+                        ctx.beginPath();
+                        ctx.moveTo(left, top);
+                        ctx.lineTo(left + CELL_SIZE, top);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.E) {
+                        ctx.beginPath();
+                        ctx.moveTo(left + CELL_SIZE, top);
+                        ctx.lineTo(left + CELL_SIZE, top + CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.S) {
+                        ctx.beginPath();
+                        ctx.moveTo(left + CELL_SIZE, top + CELL_SIZE);
+                        ctx.lineTo(left, top + CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.W) {
+                        ctx.beginPath();
+                        ctx.moveTo(left, top + CELL_SIZE);
+                        ctx.lineTo(left, top);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // 2. Dibuja la Meta (círculo verde)
+            const endX = (end.x * CELL_SIZE) + (CELL_SIZE / 2);
+            const endY = (end.y * CELL_SIZE) + (CELL_SIZE / 2);
+            ctx.fillStyle = '#4CAF50'; // Verde de la meta
+            ctx.beginPath();
+            ctx.arc(endX, endY, robot.size * 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 3. Dibuja la fruta si existe y no está recogida
+            if (hasFruit && fruit && !visionBoostActive) {
+                const fruitX = (fruit.x * CELL_SIZE) + (CELL_SIZE / 2);
+                const fruitY = (fruit.y * CELL_SIZE) + (CELL_SIZE / 2);
+                ctx.fillStyle = '#FF4136'; // Rojo de la manzana
+                ctx.beginPath();
+                ctx.arc(fruitX, fruitY, robot.size * 0.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pequeño tallo verde para la manzana
+                ctx.strokeStyle = '#2ECC40';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(fruitX, fruitY - robot.size * 0.8);
+                ctx.lineTo(fruitX + 3, fruitY - robot.size * 0.8 - 5);
+                ctx.stroke();
+            }
+
+
+            // 4. Dibuja el Efecto de Visión de la IA (Círculo Verde OPACO) si no hay boost de visión
+            if (aiVisionRadius > 0 && !visionBoostActive) {
+                // Color verde agradable y completamente opaco
+                ctx.fillStyle = 'rgb(0, 200, 83)'; 
+                ctx.beginPath();
+                ctx.arc(
+                    (robot.x * CELL_SIZE) + (CELL_SIZE / 2),
+                    (robot.y * CELL_SIZE) + (CELL_SIZE / 2),
+                    aiVisionRadius,
+                    0, Math.PI * 2
+                );
+                ctx.fill();
+            }
+
+            // 5. Dibuja el Robot (cuadrado azul) - SIEMPRE DEBE SER VISIBLE
+            const centerX = (robot.x * CELL_SIZE) + (CELL_SIZE / 2);
+            const centerY = (robot.y * CELL_SIZE) + (CELL_SIZE / 2);
+            ctx.fillStyle = '#4a90e2'; // Azul del robot (agradable)
+            ctx.fillRect(centerX - robot.size, centerY - robot.size, robot.size * 2, robot.size * 2);
+
+        }
+
+        // Lógica de movimiento del robot
+        function moveRobot(dx, dy, wallToCheck) {
+            if (isMoving) return; // Evita movimientos rápidos y dobles
+            isMoving = true;
+
+            // Revisamos la celda actual. Si el robot está fuera de los límites del arreglo, salimos.
+            if (robot.y < 0 || robot.y >= GRID_SIZE || robot.x < 0 || robot.x >= GRID_SIZE) {
+                console.error("Error de estado: El robot está fuera de los límites del laberinto.");
+                isMoving = false;
+                return;
+            }
+            
+            const currentCell = maze[robot.y][robot.x];
+
+            // 1. Verificar Colisión con Paredes Internas
+            if (currentCell.walls[wallToCheck]) {
+                isMoving = false;
+                return; // Hay pared, no se mueve
+            }
+
+            let newX = robot.x + dx;
+            let newY = robot.y + dy;
+
+            // 2. Verificar Colisión con Bordes del Canvas Y condición de victoria
+            if (newX < 0 || newX >= GRID_SIZE || newY < 0 || newY >= GRID_SIZE) {
+                // Es la SALIDA del laberinto (moviéndose de la celda final hacia afuera)
+                if (robot.x === end.x && robot.y === end.y && dx === 1) { 
+                    winCheck(); // Activa la victoria y el reinicio
+                    isMoving = false;
+                    return; // Detiene el movimiento sin actualizar las coordenadas fuera de límite
+                } 
+                
+                // Es la ENTRADA (moviéndose fuera del laberinto desde la celda inicial)
+                if (robot.x === 0 && dx === -1) {
+                    isMoving = false;
+                    return; 
+                }
+
+                // Cualquier otro movimiento fuera de límites es ilegal
+                isMoving = false;
+                return;
+            }
+            
+            // Si no hay colisión ni salida, actualiza la posición
+            robot.x = newX;
+            robot.y = newY;
+
+            // Comprobar si el robot ha recogido la fruta
+            if (hasFruit && fruit && robot.x === fruit.x && robot.y === fruit.y) {
+                activateVisionBoost();
+                hasFruit = false; // La fruta es consumida
+            }
+
+            drawGame();
+            
+            // Pequeño delay para limitar la velocidad de movimiento
+            setTimeout(() => { isMoving = false; }, 100); 
+        }
+
+        // Activa el efecto de visión completa
+        function activateVisionBoost() {
+            visionBoostActive = true;
+            drawGame(); // Redibujar inmediatamente para mostrar la visión completa
+            setTimeout(() => {
+                visionBoostActive = false;
+                drawGame(); // Redibujar para restaurar la visión de la IA
+            }, 1000); // 1 segundo de duración
+        }
+
+        // Verifica si el robot ha llegado a la meta
+        function winCheck() {
+            const previousLevel = currentLevel;
+            currentLevel++;
+
+            // SOLO AUMENTAR EL RADIO SI EL NIVEL ANTERIOR ES MENOR AL MÁXIMO (Nivel 5)
+            if (previousLevel < MAX_AI_LEVEL) {
+                 aiVisionRadius += 20; // El círculo crece
+            }
+            
+            modalTitle.textContent = "¡Nivel Completado!";
+            
+            // Determinar el texto de la dificultad del mapa para el mensaje
+            let mapDifficultyText;
+            if (wallsToBreak === 0) mapDifficultyText = "Máxima";
+            else if (wallsToBreak <= 1) mapDifficultyText = "Alta";
+            else mapDifficultyText = "Media/Baja";
+
+            let message = `Has resuelto el Laberinto ${previousLevel} (Dificultad Mapa: ${mapDifficultyText}).`;
+
+            if (currentLevel <= MAX_AI_LEVEL) {
+                 message += ` La "IA" (círculo verde) ha crecido a ${aiVisionRadius}px.`;
+            } else if (currentLevel === MAX_AI_LEVEL + 1) {
+                 message += ` El radio de visión de la IA ha alcanzado su límite (${aiVisionRadius}px).`;
+            }
+
+            if (currentLevel >= 6) {
+                 message += ` ¡Busca la manzana para una visión completa temporal!`;
+            }
+
+            modalText.textContent = message;
+            modalButton.textContent = "Continuar al Nivel " + currentLevel;
+            messageBox.classList.remove('hidden');
+
+            modalButton.onclick = () => {
+                messageBox.classList.add('hidden');
+                initGame(); // Reinicia el juego con el nuevo nivel/dificultad
+            };
+        }
+
+        // Actualiza el texto de estado en el DOM
+        function updateStatus() {
+            let difficultyText;
+            if (aiVisionRadius === 0) difficultyText = "Baja";
+            else if (aiVisionRadius < 60) difficultyText = "Media";
+            else if (aiVisionRadius < 100) difficultyText = "Alta";
+            else difficultyText = "Extrema";
+
+            // Determinar el texto de la dificultad del mapa
+            let mapDifficultyText;
+            if (wallsToBreak === 0) mapDifficultyText = "Máxima";
+            else if (wallsToBreak <= 1) mapDifficultyText = "Alta";
+            else mapDifficultyText = "Media/Baja";
+
+            statusDisplay.innerHTML = `Nivel: ${currentLevel} | IA: ${difficultyText} | Mapa: ${mapDifficultyText}`;
+        }
+
+        // Manejador de eventos de teclado (Flechas y WASD)
+        document.addEventListener('keydown', (e) => {
+            if (messageBox.classList.contains('hidden')) {
+                switch (e.key) {
+                    case 'ArrowUp':
+                    case 'w':
+                        moveRobot(0, -1, 'N');
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                        moveRobot(0, 1, 'S');
+                        break;
+                    case 'ArrowLeft':
+                    case 'a':
+                        moveRobot(-1, 0, 'W');
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                        moveRobot(1, 0, 'E');
+                        break;
+                }
+            }
+        });
+
+        // Manejador de eventos de botones táctiles/UI
+        document.getElementById('btn-up').addEventListener('click', () => moveRobot(0, -1, 'N'));
+        document.getElementById('btn-down').addEventListener('click', () => moveRobot(0, 1, 'S'));
+        document.getElementById('btn-left').addEventListener('click', () => moveRobot(-1, 0, 'W'));
+        document.getElementById('btn-right').addEventListener('click', () => moveRobot(1, 0, 'E'));
+
+        // Iniciar el juego
+        window.onload = function() {
+            initGame();
+        };
+
+    </script>
+</body>
+</html>
